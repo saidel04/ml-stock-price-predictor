@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.spec
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*.DS_Store
+Thumbs.db
+
+# Project-specific
+data/*.csv          # cached stock data (can be re-downloaded)
+models/*.keras      # trained model weights (large binary)
+models/*.h5
+screenshots/*.png   # generated screenshots
+*.log
