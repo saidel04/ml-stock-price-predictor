@@ -1,14 +1,14 @@
 # ML Stock Price Predictor
 
-> A desktop application that uses a dual-layer LSTM neural network to predict stock prices, complete with technical indicator analysis, interactive charts, and a polished dark-themed GUI.
+> A desktop application that uses scikit-learn ensemble models to predict stock prices, with technical indicator analysis, interactive dark-themed charts, and a clean CustomTkinter GUI.
 
 ---
 
 ## Screenshots
 
-| Overview Tab | Train / Test Tab | Forecast Tab |
+| Overview Tab | Predictions Tab | Forecast Tab |
 |:---:|:---:|:---:|
-| ![Overview](screenshots/overview.png) | ![Train Test](screenshots/train_test.png) | ![Forecast](screenshots/forecast.png) |
+| ![Overview](screenshots/overview.png) | ![Predictions](screenshots/predictions.png) | ![Forecast](screenshots/forecast.png) |
 
 > _Screenshots will appear after your first run._
 
@@ -17,14 +17,14 @@
 ## Features
 
 - **Live data** — fetches OHLCV history for any ticker via `yfinance`, with local CSV caching to avoid redundant downloads
-- **Feature engineering** — automatically computes SMA (20/50), EMA (12/26), RSI, MACD, Bollinger Bands, daily returns, and volume MA
-- **LSTM model** — two-layer LSTM (128 → 64 units) with Dropout regularisation, trained with early stopping and learning-rate scheduling
-- **Evaluation metrics** — RMSE and MAE displayed in real time after training
+- **Feature engineering** — computes 15+ features: SMA (20/50), EMA (12/26), RSI, MACD, Bollinger Bands, daily returns, and 5-day lag features
+- **Two model options** — switch between Random Forest and Gradient Boosting from a dropdown in the UI
+- **Evaluation metrics** — RMSE, MAE, and R² displayed after training
 - **Three interactive chart tabs**
-  - _Overview_: price with SMA/Bollinger overlay, volume, RSI
-  - _Train / Test_: predictions vs actual with train/test split visualised, plus loss curves
-  - _Forecast_: future N-day forecast with confidence band
-- **Fully adjustable** — lookback window, epochs, and forecast horizon are all slider-controlled in the UI
+  - _Overview_: price with SMA/Bollinger overlay, volume bars, RSI
+  - _Predictions_: test-set predicted vs actual closing prices
+  - _Forecast_: autoregressive N-day price forecast with ±5% confidence band
+- **Adjustable forecast horizon** — 5 to 60 trading days via slider
 - **Non-blocking** — all ML work runs in background daemon threads; the GUI never freezes
 
 ---
@@ -33,12 +33,13 @@
 
 | Layer | Technology |
 |---|---|
-| Language | Python 3.10+ |
+| Language | Python 3.8+ |
 | GUI | CustomTkinter |
 | Data | yfinance, pandas |
-| ML | TensorFlow / Keras (LSTM) |
-| Features | scikit-learn (MinMaxScaler), NumPy |
+| ML | scikit-learn (Random Forest, Gradient Boosting) |
+| Features | NumPy, MinMaxScaler |
 | Charts | Matplotlib (TkAgg backend) |
+| Model saving | joblib |
 
 ---
 
@@ -69,8 +70,6 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-> **Note:** TensorFlow requires Python 3.8–3.11. On Apple Silicon use `tensorflow-macos` instead.
-
 ---
 
 ## Usage
@@ -82,18 +81,19 @@ python main.py
 ### Workflow
 
 1. **Enter a ticker** (e.g. `AAPL`, `TSLA`, `NVDA`, `BTC-USD`)
-2. **Set the date range** — at least 1 year is recommended; 3–5 years gives the best results
-3. **Adjust model settings** with the sliders (lookback window, epochs, forecast horizon)
-4. **Click "Train Model"** — the status bar reports live epoch progress
-5. Switch to the **Train / Test** tab to review prediction accuracy and loss curves
-6. **Click "Generate Forecast"** — the Forecast tab shows the predicted trajectory for the next N days
+2. **Set the date range** — at least 1 year recommended; 3–5 years gives better results
+3. **Pick a model** — Random Forest or Gradient Boosting
+4. **Set the forecast horizon** with the slider (5–60 trading days)
+5. **Click "Train Model"** — data is fetched, features are computed, and the model trains in seconds
+6. Switch to **Predictions** to review test-set accuracy
+7. **Click "Generate Forecast"** — the Forecast tab shows the predicted trajectory
 
 ### Tips
 
-- Start with **AAPL** or **MSFT** for stable, well-studied stocks
-- A **60-day lookback** window is the default and works well for most tickers
-- Use **100+ epochs** with early stopping for better convergence
-- The model uses ~80 % of data for training and reserves 20 % for evaluation
+- Start with **AAPL** or **MSFT** for well-known, liquid stocks
+- **Gradient Boosting** typically gives slightly lower RMSE; **Random Forest** trains faster
+- Use at least **3 years** of data for meaningful results
+- The model uses 80% of data for training and 20% for evaluation (chronological split — no shuffling)
 
 ---
 
@@ -108,52 +108,56 @@ ml-stock-predictor/
 ├── README.md
 ├── src/
 │   ├── __init__.py
-│   ├── data_fetcher.py   # Yahoo Finance download + caching
-│   ├── preprocessor.py   # Feature engineering + LSTM sequence builder
-│   ├── model.py          # LSTM architecture, training, inference
+│   ├── data_fetcher.py   # Yahoo Finance download + CSV caching
+│   ├── preprocessor.py   # Technical indicators + lag features + scaling
+│   ├── model.py          # scikit-learn regressors, evaluation, joblib persistence
 │   ├── gui.py            # CustomTkinter application window
 │   └── utils.py          # Background workers, chart theme, helpers
 ├── data/                 # Auto-created — cached CSV files
-├── models/               # Auto-created — saved Keras checkpoints
+├── models/               # Auto-created — saved model files
 └── screenshots/          # Placeholder for README images
 ```
 
 ---
 
-## Model Architecture
+## How the Model Works
 
-```
-Input  (sequence_length × n_features)
-  └─► LSTM(128, return_sequences=True)
-        └─► Dropout(0.20)
-              └─► LSTM(64, return_sequences=False)
-                    └─► Dropout(0.20)
-                          └─► Dense(32, ReLU)
-                                └─► Dense(1)   ← predicted Close price
-```
+Each row in the training data represents one trading day. The target is the **next day's closing price**.
 
-- **Optimiser:** Adam (lr = 1e-3, with ReduceLROnPlateau)
-- **Loss:** Mean Squared Error
-- **Callbacks:** EarlyStopping (patience 15), ReduceLROnPlateau (patience 8), ModelCheckpoint
+**Input features per row:**
+- Raw OHLCV columns (Open, High, Low, Close, Volume)
+- SMA 20, SMA 50, EMA 12, EMA 26
+- RSI (14-period)
+- MACD line, MACD signal
+- Bollinger Band upper/lower
+- Daily return (% change)
+- Lag features: Close price from 1–5 days ago
+
+**Training:**
+- Features are scaled to [0, 1] with MinMaxScaler (fit on training data only)
+- Chronological 80/20 train/test split — no shuffling to preserve time ordering
+- Random Forest: 200 trees, max depth 10
+- Gradient Boosting: 200 estimators, learning rate 0.05, max depth 5
+
+**Forecasting:**
+- Autoregressively feeds each predicted price back as the next row's lag features
+- Runs for the number of days set by the forecast horizon slider
 
 ---
 
 ## Limitations & Disclaimer
 
 > **This project is for educational and portfolio purposes only.**
-> Stock prices are influenced by countless unpredictable factors (news, macro events, sentiment). An LSTM trained on historical price data **cannot reliably predict future prices** and should **never** be used for real investment decisions.
+> Stock prices are influenced by countless unpredictable factors (news, macro events, sentiment). A model trained on historical price data **cannot reliably predict future prices** and should **never** be used for real investment decisions.
 
 ---
 
 ## What I Learned
 
-Building this project gave me hands-on experience with:
-
-- **Time-series ML** — structuring sliding-window sequences for LSTM input, preventing data leakage by fitting scalers only on the training portion, and using autoregressive inference for multi-step forecasting
-- **Feature engineering for finance** — implementing RSI, MACD, and Bollinger Bands from scratch using vectorised pandas operations
-- **GUI + ML integration** — keeping the UI responsive while TensorFlow trains by offloading all blocking work to daemon threads and dispatching GUI updates through `after()` callbacks
-- **Keras best practices** — EarlyStopping with weight restoration, ReduceLROnPlateau, and ModelCheckpoint for robust training loops
-- **Matplotlib in Tkinter** — embedding interactive figures with NavigationToolbar2Tk and dynamically redrawing canvases without flickering
+- **Feature engineering for finance** — implementing RSI, MACD, and Bollinger Bands from scratch using vectorised pandas, and building lag features for autoregressive forecasting
+- **Preventing data leakage** — fitting the MinMaxScaler on the training split only and using a strict chronological train/test split
+- **GUI + ML integration** — keeping the UI responsive by offloading all blocking work to daemon threads and dispatching GUI updates back through `after()` callbacks
+- **Matplotlib in Tkinter** — embedding interactive figures with NavigationToolbar2Tk and redrawing canvases dynamically without flickering
 
 ---
 
